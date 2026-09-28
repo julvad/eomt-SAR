@@ -190,7 +190,7 @@ def get_train_val_dataloaders(
         drop_last=False,
         num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=True
+        persistent_workers=True if num_workers else False
     )
     val_loader = DataLoader(
         val_dataset,
@@ -199,7 +199,7 @@ def get_train_val_dataloaders(
         drop_last=False,
         num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=True
+        persistent_workers=True if num_workers else False
     )
     if not return_datasets:
         return train_loader, val_loader

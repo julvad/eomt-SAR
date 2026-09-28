@@ -55,8 +55,11 @@ def save_and_manage_checkpoints(
     best_models.append((monitor_value, epoch, model_path))
     
     # Sort and keep only the best max_models
+    if monitor_metric=='loss':
+        best_models.sort(key=lambda x: x[0], reverse=False)
+    else:
+        best_models.sort(key=lambda x: x[0], reverse=True) # reverse = True : from high to low
 
-    best_models.sort(key=lambda x: x[0], reverse=True) # reverse = True : from high to low
     while len(best_models) > max_models:
         worst = best_models.pop()  # Remove the last model in reverse sorted list (lowest IoU)
         try:
@@ -74,9 +77,9 @@ def train_model(
     model: nn.Module,
     train_loader: DataLoader,
     val_loader: DataLoader,
-    rsz_size:int,
     num_epochs: int = 25,
     lr: float = 1e-2,
+    freeze_backbone: bool = False,
     loss_fnc:Literal['ce','wce','combo','wcombo','focal']='ce',
     num_classes: int = 2,
     weight_decay: float = 4e-2,
@@ -84,15 +87,13 @@ def train_model(
     log_dir: str = "runs",
     log_dataset:str = '512_20',
     log_batchsize:int=8,
-    log_frozen_backbone:bool=False,
     log_transform:str='sar_transform',
     log_pretrained_weights:str='imagenet',
-    freeze_backbone: bool = False,
     type_scheduler: Literal['reduce_lr','cosine_annealing'] = "reduce_lr",
     label_smoothing: bool = True,
     device: str = "cuda:0",
     n_tensorboard_plot:int=0,
-    diff_lr_encoder_decoder:bool=False,
+    diff_lr_encoder_decoder_factor:bool=False,
 ) -> None:
     """
     Here,
@@ -154,10 +155,10 @@ def train_model(
 
     writer = SummaryWriter(log_dir)
 
-    if diff_lr_encoder_decoder:
+    if diff_lr_encoder_decoder_factor:
         optimizer = torch.optim.AdamW(
             [
-                {"params": model.decoder.parameters(), "lr": lr*4},
+                {"params": model.decoder.parameters(), "lr": lr*diff_lr_encoder_decoder_factor},
             ],
             weight_decay=0.05, #TODO: see if this is better
         )
@@ -203,7 +204,7 @@ def train_model(
             images, masks = images.to(device), masks.to(device)
             # Forward pass
             # logits = model(images) # original code
-            logits = predict_eomt(eomt_model=model, batch_tensor=images, pred_mask_size=rsz_size)
+            logits = predict_eomt(eomt_model=model, batch_tensor=images, pred_mask_size=model.rsz_size)
 
             loss = criterion(logits, masks)
 
@@ -249,7 +250,7 @@ def train_model(
                 images, masks = images.to(device), masks.to(device)
 
                 # logits = model(images) #original pytorch code
-                logits = predict_eomt(eomt_model=model, batch_tensor=images, pred_mask_size=rsz_size)
+                logits = predict_eomt(eomt_model=model, batch_tensor=images, pred_mask_size=model.rsz_size)
 
                 loss = criterion(logits, masks)
                 val_loss += loss.item()
@@ -321,7 +322,7 @@ def train_model(
                 log_dir=log_dir,
                 log_dataset=log_dataset,
                 log_batch_size=log_batchsize,
-                log_frozen_backbone=log_frozen_backbone,
+                log_frozen_backbone=freeze_backbone,
                 best_models=best_models,
                 max_models=3,
             )

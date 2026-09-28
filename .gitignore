@@ -178,3 +178,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+
+
+# JV
+my_trained_models

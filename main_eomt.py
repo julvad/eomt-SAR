@@ -1,42 +1,50 @@
 ﻿# Create the same architecture
 import torch
+import timm
 from timm.models.vision_transformer import vit_small_patch16_224
-from my_code_cleanrepo.utils.transforms import imagenet_transform
+from my_code_cleanrepo.utils.transforms import imagenet_transform, sar_transform
 from models.eomt import EoMT
 import os
 import numpy as np
-from glob import glob
 from my_code_cleanrepo.train_eomt import train_model
 from my_code_cleanrepo.load_data import get_train_val_dataloaders
 import random
 from datetime import datetime
+from glob import glob
 
 
-VIT_PATH = r"C:\Users\juvad3723\.1\--Projects\GitHub\clean_repo\models\ssl\dinov2_vit_small_patch16_224_testrunOlivia.pth"
-transform = imagenet_transform(224)
+VIT_PATH = r"c:\Users\juvad3723\.1\--Projects\GitHub\lightly_sar\my_checkpoints\testrun_vits16-224_50k_bs42\ckpt_vit_epoch90_loss9.1447.pth"
+VIT_PATH = 'vit_small_patch16_224.augreg_in21k'
+# transform = imagenet_transform(224)
 
+# VIT_PATH = 'vit_small_patch16_224.augreg_in21k'
 
 # Create the same architecture
-vit = vit_small_patch16_224(
-            pos_embed="learn",
-            dynamic_img_size=True,
-            init_values=1e-5,
-            in_chans=3,
-            num_classes=0 # remove classification head
-        )
+# vit = vit_small_patch16_224(
+#             pos_embed="learn",
+#             dynamic_img_size=True,
+#             init_values=1e-5,
+#             in_chans=1,
+#             num_classes=0 # remove classification head
+#         )
 
-# Load weights
-state_dict = torch.load(VIT_PATH)
+vit = timm.create_model(
+    VIT_PATH, 
+    pretrained=True,
+    pos_embed='learn',
+    dynamic_img_size=True,
+    init_values=1e-5,
+    in_chans=3,
+    num_classes=0)
 
-state_dict.pop("head.weight", None)
-state_dict.pop("head.bias", None)
 
-vit.load_state_dict(state_dict, strict=False)
+# # Load weights
+# dino_sd = torch.load(VIT_PATH, map_location='cpu')
 
-missing, unexpected = vit.load_state_dict(
-    state_dict,
-    strict=False
-)
+# dino_sd.pop("head.weight", None)
+# dino_sd.pop("head.bias", None)#
+
+# vit.load_state_dict(dino_sd, strict=True)
 
 eomt_model = EoMT(
     encoder=vit,
@@ -49,43 +57,52 @@ eomt_model = EoMT(
 # Dataset_____________________________________________________________
 TS = 512
 PS = 20
-TS_PATH = rf'c:\Users\juvad3723\.1\--Projects\GitHub\clean_repo\data\pytorch_samples\{TS}_{PS}'
-REGION = None # one region or None (all)
+TS_PATH = rf'c:\Users\juvad3723\.1\--Projects\GitHub\clean_repo\data\pytorch_samples\{TS}_{PS}_pruning70'
+REGION = 'northsea' # one region or None (all)
 TYPE = 'seep' # one oil slick type or all
-DATASET = f'{TS}-{PS}: slicks_world_4sept26 -seeps'
+DATASET = f'{TS}-{PS}: slicks_world_4sept26'
+
 #_____________________________________________________________________
 
 RESIZE_SIZE = 224
 NUM_CLASSES = 2
 
-
 FREEZE_BB = False
-BATCH_SIZE = 24
-LR = '2e-5'
-DIFF_LR_ENCO_DECO = False
+BATCH_SIZE = 32
+LR = '5e-5'
+DIFF_LR_ENCO_DECO_FACTOR = False
 DROPOUT_P = None # NOTE: not implemented for eomt
 MAX_EPOCHS = 40
 SUBSET = None # Int or None
 LOSS_FNC = 'wcombo' # 'ce', 'wce', 'combo', 'wcombo'
 CHECKPOINT = None
+transform = sar_transform(RESIZE_SIZE, triple=True)
+# transform = imagenet_transform(224)
+
+
+
 
 #___________________
 if not REGION:
     REGION = '*'
 if not TYPE:
     TYPE = '*'
-TRAIN_FOLDERS = [ # use this if split by regions and type
-    x for x in glob(os.path.join(TS_PATH, REGION, 'train', TYPE)) if os.path.basename(x) not in ['images','labels'] 
-]
+    
+TRAIN_FOLDERS = []
+VAL_FOLDERS = []
 
-VAL_FOLDERS = [ # use this if split by regions and type
-    x for x in glob(os.path.join(TS_PATH, REGION, 'val', TYPE)) if os.path.basename(x) not in ['images','labels'] 
-]
+# My god this is messy but OK
 
-if TYPE!='*':
-    TRAIN_FOLDERS.extend(glob(os.path.join(TS_PATH, REGION, 'train', 'bg')))
-    VAL_FOLDERS.extend(glob(os.path.join(TS_PATH, REGION, 'val', 'bg')))
+types = TYPE if isinstance(TYPE, list) else [TYPE]
+regions = REGION if isinstance(REGION, list) else [REGION]
 
+for type_ in types:
+    for region_ in regions:
+        TRAIN_FOLDERS.extend(glob(os.path.join(TS_PATH, region_, "train", type_)))
+        VAL_FOLDERS.extend(glob(os.path.join(TS_PATH, region_, "val", type_)))
+
+# print(f'train folders: {TRAIN_FOLDERS}')
+# print(f'val folders: {VAL_FOLDERS}')
 
 seed = 24
 random.seed(seed)          
@@ -102,7 +119,7 @@ if __name__ == '__main__':
     device = "cuda:0"
     lr = float(LR)
 
-    triple = True
+    triple = False
     if triple:
         in_bands = 3
     else:
@@ -115,10 +132,14 @@ if __name__ == '__main__':
             out_log_dir = f'my_trained_models/{TS}-{PS}_{MAX_EPOCHS}epochs/vits16_{ff}_bs{BATCH_SIZE}_lr{LR}_{LOSS_FNC}-loss'
         else:
             out_log_dir = f'my_trained_models/{TS}rsz{RESIZE_SIZE}-{PS}_{MAX_EPOCHS}epochs/vits16_{ff}_bs{BATCH_SIZE}_lr{LR}_{LOSS_FNC}-loss'
+        a,b = out_log_dir.split('vits16')
+        if 'lightly' in VIT_PATH:
+            out_log_dir = a + '_LightlyDino' + b
+        else:
+            out_log_dir = a + VIT_PATH.split('224.')[1] + b
 
     else:
-        out_log_dir = CHECKPOINT + '_ft' #NOTE if path gets too long, need to use below
-        # out_log_dir = f'models/{TS}rsz{RESIZE_SIZE}-{PS}_{MAX_EPOCHS}epochs/{SEG_MODEL}_{ENCODER}_{ff}_bs{BATCH_SIZE}_lr{LR}_{LOSS_FNC}-loss'
+        out_log_dir = CHECKPOINT + '_ft'
 
     if SUBSET is not None:
         out_log_dir = out_log_dir + f'_subset{SUBSET}'
@@ -142,23 +163,23 @@ if __name__ == '__main__':
         random_seed=seed
     )
 
+    eomt_model.source = 'timm' #smp or timm
+    eomt_model.rsz_size = RESIZE_SIZE
     eomt_model = eomt_model.to(device)
     
     train_model(
         model=eomt_model,
         train_loader=train_loader,
         val_loader=val_loader,
-        rsz_size=RESIZE_SIZE,
         num_epochs=MAX_EPOCHS,
         num_classes=NUM_CLASSES,
         loss_fnc=LOSS_FNC,
         type_scheduler='cosine_annealing',
-        weight_decay=5e-3,
+        weight_decay=1e-3,
         monitor_metric='dice',
         log_dir=out_log_dir,
         log_dataset={'dataset log': DATASET, 'train': TRAIN_FOLDERS, 'val': VAL_FOLDERS},
         log_batchsize=BATCH_SIZE,
-        log_frozen_backbone=FREEZE_BB,
         log_transform=transform.name,
         log_pretrained_weights=VIT_PATH,
         freeze_backbone=FREEZE_BB,
@@ -166,5 +187,5 @@ if __name__ == '__main__':
         label_smoothing=True,
         device=device,
         n_tensorboard_plot=min(BATCH_SIZE,24),
-        diff_lr_encoder_decoder=DIFF_LR_ENCO_DECO
+        diff_lr_encoder_decoder_factor=DIFF_LR_ENCO_DECO_FACTOR
     )
